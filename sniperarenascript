@@ -1,0 +1,1298 @@
+--[[
+	SNIPER ARENA SCRIPT  -  By Antonio
+	Aimbot | Silent Aim | Magic Bullets | ESP | Wallhack (Chams) | Hitbox | Player | Visuals
+	Menü-Taste: RightShift (änderbar in Settings)  |  Einstellungen werden automatisch gespeichert
+]]
+
+-- ============================================================
+-- Services
+-- ============================================================
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+local Lighting         = game:GetService("Lighting")
+local CoreGui          = game:GetService("CoreGui")
+local HttpService      = game:GetService("HttpService")
+
+local LP     = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local Mouse  = LP:GetMouse()
+local env    = (getgenv and getgenv()) or _G
+
+if env.__SniperArenaCleanup then pcall(env.__SniperArenaCleanup) end
+
+-- ============================================================
+-- Einstellungen (+ automatisches Speichern)
+-- ============================================================
+local S = {
+	-- Aimbot
+	aimbot = false, aimKey = "RMB", aimMethod = "Kamera", aimPart = "Head", aimFov = 150, showFov = true,
+	smooth = 3, predict = 0, priority = "Fadenkreuz", aimMaxDist = 5000,
+	teamCheck = false, wallCheck = false, stickyTarget = false, targetNpcs = false,
+	-- Silent / Magic
+	silent = false, silentFov = 250, hitChance = 100, silentPart = "Head",
+	magic = false, magicThroughWalls = true,
+	remoteSpoof = true, remoteOnlyNamed = false, mouseSpoof = true, remoteLog = false,
+	-- Hitbox
+	hitbox = false, hitboxSize = 10, hitboxTrans = 0.7, hitboxPart = "HumanoidRootPart", hitboxTeamCheck = false,
+	-- ESP
+	esp = false, espBox = true, espName = true, espDist = true, espHealth = true, espTracer = false,
+	espMaxDist = 10000, espTeamCheck = false, espVisColor = false,
+	-- Chams
+	chams = false, chamsFill = 0.5, chamsOutline = 0,
+	-- Player
+	speedOn = false, speed = 40, jumpOn = false, jump = 70, infJump = false, noclip = false,
+	fly = false, flySpeed = 60,
+	-- Visuals
+	fullbright = false, fovOn = false, fov = 90, crosshair = false, watermark = true,
+	-- Settings
+	menuKey = "RightShift", accent = "Blau",
+}
+
+local FILE = "SniperArena_Antonio_v2.json"
+local canFile = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+if canFile then
+	pcall(function()
+		if isfile(FILE) then
+			local d = HttpService:JSONDecode(readfile(FILE))
+			for k, v in pairs(d) do
+				if S[k] ~= nil and type(v) == type(S[k]) then S[k] = v end
+			end
+		end
+	end)
+end
+local saveQueued = false
+local function save()
+	if not canFile or saveQueued then return end
+	saveQueued = true
+	task.delay(1, function()
+		saveQueued = false
+		pcall(function() writefile(FILE, HttpService:JSONEncode(S)) end)
+	end)
+end
+
+local ACCENTS = {
+	Blau   = Color3.fromRGB(80, 140, 255),
+	Rot    = Color3.fromRGB(255, 80, 100),
+	Gruen  = Color3.fromRGB(60, 210, 140),
+	Lila   = Color3.fromRGB(150, 110, 255),
+	Orange = Color3.fromRGB(255, 160, 60),
+}
+local ACCENT_NAMES = { "Blau", "Rot", "Gruen", "Lila", "Orange" }
+
+local T = {
+	Bg = Color3.fromRGB(12, 12, 17), Panel = Color3.fromRGB(19, 19, 26),
+	Card = Color3.fromRGB(27, 27, 36), Card2 = Color3.fromRGB(38, 38, 50), Line = Color3.fromRGB(48, 48, 64),
+	Text = Color3.fromRGB(234, 234, 242), Muted = Color3.fromRGB(135, 135, 156),
+	Good = Color3.fromRGB(70, 214, 140), Bad = Color3.fromRGB(255, 92, 108),
+	Accent = ACCENTS[S.accent] or ACCENTS.Blau,
+}
+
+-- ============================================================
+-- Hilfsfunktionen
+-- ============================================================
+local alive = true
+local conns = {}
+local function connect(sig, fn)
+	local c = sig:Connect(fn)
+	conns[#conns + 1] = c
+	return c
+end
+
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props or {}) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+local function round(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
+local function stroke(o, c, t) return new("UIStroke", { Color = c or T.Line, Thickness = t or 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o) end
+local function pad(o, l, t, r, b)
+	t = t or l
+	return new("UIPadding", { PaddingLeft = UDim.new(0, l), PaddingTop = UDim.new(0, t), PaddingRight = UDim.new(0, r or l), PaddingBottom = UDim.new(0, b or t) }, o)
+end
+local function tween(o, t, props)
+	TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+end
+
+local function guiParent()
+	local ok, r = pcall(function() return gethui() end)
+	if ok and typeof(r) == "Instance" then return r end
+	ok, r = pcall(function() local _ = CoreGui.Name; return CoreGui end)
+	if ok and r then return r end
+	return LP:WaitForChild("PlayerGui")
+end
+
+local gui = new("ScreenGui", { Name = "SniperArenaByAntonio", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true, DisplayOrder = 999 })
+pcall(function() if syn and syn.protect_gui then syn.protect_gui(gui) end end)
+gui.Parent = guiParent()
+
+local accentObjs = {}
+local function accented(obj, prop)
+	accentObjs[#accentObjs + 1] = { obj = obj, prop = prop }
+	obj[prop] = T.Accent
+end
+local function setAccent(name)
+	S.accent = name
+	T.Accent = ACCENTS[name] or ACCENTS.Blau
+	for i = #accentObjs, 1, -1 do
+		local e = accentObjs[i]
+		if e.obj and e.obj.Parent then
+			tween(e.obj, 0.2, { [e.prop] = T.Accent })
+		else
+			table.remove(accentObjs, i)
+		end
+	end
+end
+
+local notifHolder = new("Frame", { Size = UDim2.new(0, 280, 1, -20), Position = UDim2.new(1, -292, 0, 10), BackgroundTransparency = 1 }, gui)
+new("UIListLayout", { Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Bottom, SortOrder = Enum.SortOrder.LayoutOrder }, notifHolder)
+local function notify(msg, bad)
+	local f = new("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = T.Card, BorderSizePixel = 0 }, notifHolder)
+	round(f, 10)
+	stroke(f, T.Line, 1)
+	pad(f, 14, 9, 12, 9)
+	local bar = new("Frame", { Size = UDim2.new(0, 3, 1, -12), Position = UDim2.fromOffset(6, 6), BackgroundColor3 = bad and T.Bad or T.Accent, BorderSizePixel = 0 }, f)
+	round(bar, 2)
+	new("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Text = msg }, f)
+	local sc = new("UIScale", { Scale = 0.9 }, f)
+	tween(sc, 0.18, { Scale = 1 })
+	task.delay(3.5, function() if f.Parent then f:Destroy() end end)
+end
+
+-- ============================================================
+-- Ziele sammeln (EINMAL pro Frame, alle Module nutzen dieselbe Liste)
+-- ============================================================
+local targets = {}      -- lebende Ziele: { player, char, hum, root, name, team }
+local charSet = {}      -- ALLE Charaktere der anderen Spieler (auch tote) fuer die Remote-Erkennung
+local npcCache = {}
+local myPos = nil
+
+local function rootOf(c)
+	return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChild("Torso")
+		or c:FindFirstChild("UpperTorso") or c:FindFirstChild("Head")
+end
+local function myHum() local c = LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
+local function myRoot() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
+
+local function isTeammate(t)
+	return t.team ~= nil and LP.Team ~= nil and t.team == LP.Team
+end
+
+local function collectTargets()
+	table.clear(targets)
+	table.clear(charSet)
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LP then
+			local c = p.Character or workspace:FindFirstChild(p.Name)
+			if c and c:IsA("Model") then
+				charSet[c] = true
+				local hum = c:FindFirstChildOfClass("Humanoid")
+				local root = rootOf(c)
+				if root and (not hum or hum.Health > 0) then
+					targets[#targets + 1] = { player = p, char = c, hum = hum, root = root, name = p.DisplayName, team = p.Team }
+				end
+			end
+		end
+	end
+	if S.targetNpcs then
+		for _, m in ipairs(npcCache) do
+			if m.Parent and m ~= LP.Character then
+				local hum = m:FindFirstChildOfClass("Humanoid")
+				local root = rootOf(m)
+				if root and hum and hum.Health > 0 then
+					charSet[m] = true
+					targets[#targets + 1] = { char = m, hum = hum, root = root, name = m.Name }
+				end
+			end
+		end
+	end
+end
+
+-- NPCs / Bots (nur wenn aktiviert) - Scan im Hintergrund
+task.spawn(function()
+	while alive do
+		if S.targetNpcs then
+			local list = {}
+			local d = workspace:GetDescendants()
+			for i = 1, #d do
+				local o = d[i]
+				if o:IsA("Humanoid") then
+					local m = o.Parent
+					if m and m:IsA("Model") and m ~= LP.Character and not Players:GetPlayerFromCharacter(m) then
+						list[#list + 1] = m
+					end
+				end
+				if i % 3000 == 0 then task.wait() end
+			end
+			npcCache = list
+		else
+			npcCache = {}
+		end
+		task.wait(2.5)
+	end
+end)
+
+-- ============================================================
+-- Sichtpruefung / Ziel-Auswahl
+-- ============================================================
+local ownCall = false -- true, solange das Script selbst Raycasts macht (damit die Hooks sie nicht veraendern)
+
+local visParams = RaycastParams.new()
+visParams.FilterType = Enum.RaycastFilterType.Exclude
+visParams.IgnoreWater = true
+local function isVisible(part, char)
+	ownCall = true
+	local origin = Camera.CFrame.Position
+	local ign = { LP.Character, Camera }
+	local result = false
+	for _ = 1, 4 do
+		visParams.FilterDescendantsInstances = ign
+		local res = workspace:Raycast(origin, part.Position - origin, visParams)
+		if not res then result = true break end
+		local inst = res.Instance
+		if inst:IsDescendantOf(char) then result = true break end
+		if inst.Transparency >= 0.9 then ign[#ign + 1] = inst else break end
+	end
+	ownCall = false
+	return result
+end
+
+local function mouseLoc() return UserInputService:GetMouseLocation() end
+
+local function pickPart(t, partName)
+	local c = t.char
+	return c:FindFirstChild(partName) or c:FindFirstChild("Head") or t.root
+end
+
+-- useFov = nur Ziele im FOV-Kreis; sonst alle (Magic Bullets)
+local function getTarget(partName, fov, useFov, wall, maxDist)
+	local best, bestScore
+	local ml = mouseLoc()
+	local cf = Camera.CFrame
+	local camPos, look = cf.Position, cf.LookVector
+	for _, t in ipairs(targets) do
+		if not (S.teamCheck and isTeammate(t)) then
+			local part = pickPart(t, partName)
+			if part then
+				local pos = part.Position
+				local dist = (pos - camPos).Magnitude
+				if dist <= maxDist then
+					local sp = Camera:WorldToViewportPoint(pos)
+					local sd = (Vector2.new(sp.X, sp.Y) - ml).Magnitude
+					local ok = true
+					if useFov then ok = sp.Z > 0 and sd <= fov end
+					if ok and wall and not isVisible(part, t.char) then ok = false end
+					if ok then
+						local score
+						if S.priority == "Distanz" then
+							score = dist
+						elseif S.priority == "Leben" then
+							score = t.hum and t.hum.Health or 100
+						elseif useFov then
+							score = sd
+						else
+							score = math.acos(math.clamp(look:Dot((pos - camPos).Unit), -1, 1))
+						end
+						if not bestScore or score < bestScore then
+							bestScore = score
+							best = { player = t.player, char = t.char, hum = t.hum, root = t.root, part = part, name = t.name }
+						end
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function aimKeyDown()
+	if S.aimKey == "Immer" then return true end
+	if S.aimKey == "LMB" then return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end
+	return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+end
+
+-- ============================================================
+-- Silent Aim / Magic Bullets (Hooks)
+-- ============================================================
+local silentTarget = nil
+local realHitPos, realTarget = Vector3.zero, nil
+
+local function silentActive() return alive and (S.silent or S.magic) and silentTarget ~= nil end
+
+local rollT, rollV = 0, true
+local function roll()
+	if S.magic then return true end
+	local n = os.clock()
+	if n - rollT > 0.25 then
+		rollT = n
+		rollV = math.random(1, 100) <= S.hitChance
+	end
+	return rollV
+end
+
+-- Ist dieser Raycast ein Schuss? (lang + startet an Kamera/Charakter) -> verhindert, dass Boden-/Kamera-Raycasts kaputtgehen
+local function isShotRay(origin, dir)
+	if typeof(origin) ~= "Vector3" or typeof(dir) ~= "Vector3" then return false end
+	if dir.Magnitude < 60 then return false end
+	if (origin - Camera.CFrame.Position).Magnitude < 25 then return true end
+	return myPos ~= nil and (origin - myPos).Magnitude < 25
+end
+
+local function inCharSet(inst)
+	local a = inst
+	for _ = 1, 7 do
+		if not a then return nil end
+		if charSet[a] then return a end
+		a = a.Parent
+	end
+	return nil
+end
+
+-- Remote-Argumente (Instanzen, Positionen, Richtungen, CFrames, Tabellen) auf das Ziel umschreiben
+local function spoofArg(v, key, depth, named)
+	local t = silentTarget
+	local tpos = t.part.Position
+	local tv = typeof(v)
+	local k = type(key) == "string" and key:lower() or nil
+	if tv == "Instance" then
+		local ch = inCharSet(v)
+		if ch then
+			if v == ch then return t.char end
+			if v:IsA("Humanoid") then return t.hum or v end
+			if v:IsA("BasePart") then return t.part end
+			return v
+		end
+		if realTarget and v == realTarget then return t.part end
+		return v
+	elseif tv == "Vector3" then
+		local cp = Camera.CFrame.Position
+		local m = v.Magnitude
+		if k then
+			if k:find("dir", 1, true) then return (tpos - cp).Unit * (m > 0 and m or 1) end
+			if k:find("origin", 1, true) or k:find("start", 1, true) or k:find("from", 1, true) or k:find("muzzle", 1, true) or k:find("normal", 1, true) then return v end
+			if k:find("pos", 1, true) or k:find("hit", 1, true) or k:find("target", 1, true) or k:find("end", 1, true) or k:find("point", 1, true) then return tpos end
+		end
+		if math.abs(m - 1) < 0.02 then return (tpos - cp).Unit end
+		if (v - cp).Magnitude < 20 or (myPos and (v - myPos).Magnitude < 20) then return v end
+		if (v - realHitPos).Magnitude < 60 then return tpos end
+		local hv = realHitPos - cp
+		if m >= 2 and m <= 10000 and hv.Magnitude > 1 and v.Unit:Dot(hv.Unit) > 0.97 then return (tpos - cp).Unit * m end
+		if named then return tpos end
+		return v
+	elseif tv == "CFrame" then
+		local p = v.Position
+		local cp = Camera.CFrame.Position
+		if (p - cp).Magnitude < 20 or (myPos and (p - myPos).Magnitude < 20) then return CFrame.lookAt(p, tpos) end
+		if (p - realHitPos).Magnitude < 60 or named then return CFrame.new(tpos) end
+		return v
+	elseif tv == "table" and depth < 3 then
+		local n = {}
+		for kk, vv in pairs(v) do n[kk] = spoofArg(vv, kk, depth + 1, named) end
+		return n
+	end
+	return v
+end
+
+local SHOT_KEYS = { "shoot", "fire", "hit", "damage", "bullet", "gun", "weapon", "ray", "proj", "attack", "shot", "snip", "kill", "dmg", "cast" }
+local function namedShot(name)
+	name = string.lower(name)
+	for _, k in ipairs(SHOT_KEYS) do
+		if name:find(k, 1, true) then return true end
+	end
+	return false
+end
+
+local logT = {}
+local function logRemote(remote, pk)
+	local now = os.clock()
+	local nm = remote.Name
+	if now - (logT[nm] or 0) < 0.25 then return end
+	logT[nm] = now
+	local parts = {}
+	for i = 1, pk.n do
+		local v = pk[i]
+		local tv = typeof(v)
+		if tv == "Instance" then tv = "Instance(" .. v.Name .. ")"
+		elseif tv == "Vector3" or tv == "CFrame" or tv == "number" or tv == "string" or tv == "boolean" then tv = tv .. "=" .. tostring(v) end
+		parts[#parts + 1] = tv
+	end
+	print("[SniperLog] " .. nm .. " (" .. remote.ClassName .. ") -> " .. table.concat(parts, " | "))
+end
+
+local hooksOk = false
+do
+	local cc = checkcaller or function() return false end
+	local ncc = newcclosure or function(f) return f end
+	local function setM(m) if setnamecallmethod then setnamecallmethod(m) end end
+
+	hooksOk = pcall(function()
+		assert(hookmetamethod and getnamecallmethod)
+		local oldNamecall
+		oldNamecall = hookmetamethod(game, "__namecall", ncc(function(self, ...)
+			local method = getnamecallmethod()
+			if not alive or ownCall or cc() then return oldNamecall(self, ...) end
+
+			if method == "FireServer" or method == "InvokeServer" then
+				local pk = table.pack(...)
+				if S.remoteLog then
+					ownCall = true
+					pcall(logRemote, self, pk)
+					ownCall = false
+				end
+				if S.remoteSpoof and silentActive() and roll() then
+					ownCall = true
+					local okS, res = pcall(function()
+						local named = namedShot(self.Name)
+						if S.remoteOnlyNamed and not named then return nil end
+						local out = { n = pk.n }
+						for i = 1, pk.n do out[i] = spoofArg(pk[i], nil, 0, named) end
+						return out
+					end)
+					ownCall = false
+					setM(method)
+					if okS and res then return oldNamecall(self, table.unpack(res, 1, res.n)) end
+				end
+				setM(method)
+				return oldNamecall(self, ...)
+
+			elseif method == "Raycast" then
+				if self == workspace and silentActive() and roll() then
+					local o, d, p = ...
+					if isShotRay(o, d) then
+						local tpos = silentTarget.part.Position
+						local need = math.max(d.Magnitude, (tpos - o).Magnitude + 5)
+						local nd = (tpos - o).Unit * need
+						local np = p
+						if S.magic and S.magicThroughWalls then
+							np = RaycastParams.new()
+							np.FilterType = Enum.RaycastFilterType.Include
+							np.FilterDescendantsInstances = { silentTarget.char }
+						end
+						setM("Raycast")
+						return oldNamecall(self, o, nd, np)
+					end
+				end
+
+			elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist" then
+				if self == workspace and silentActive() and roll() then
+					local ray = ...
+					if typeof(ray) == "Ray" and isShotRay(ray.Origin, ray.Direction) then
+						local tpos = silentTarget.part.Position
+						local need = math.max(ray.Direction.Magnitude, (tpos - ray.Origin).Magnitude + 5)
+						local nr = Ray.new(ray.Origin, (tpos - ray.Origin).Unit * need)
+						if S.magic and S.magicThroughWalls then
+							setM("FindPartOnRayWithWhitelist")
+							return oldNamecall(self, nr, { silentTarget.char })
+						end
+						setM(method)
+						return oldNamecall(self, nr, select(2, ...))
+					end
+				end
+
+			elseif method == "ViewportPointToRay" or method == "ScreenPointToRay" then
+				if self == Camera and silentActive() and roll() then
+					setM(method)
+					local ray = oldNamecall(self, ...)
+					return Ray.new(ray.Origin, (silentTarget.part.Position - ray.Origin).Unit)
+				end
+
+			elseif method == "GetMouseLocation" then
+				if S.mouseSpoof and self == UserInputService and silentActive() and roll() then
+					ownCall = true
+					local sp = Camera:WorldToViewportPoint(silentTarget.part.Position)
+					ownCall = false
+					if sp.Z > 0 then return Vector2.new(sp.X, sp.Y) end
+					setM(method)
+				end
+			end
+			return oldNamecall(self, ...)
+		end))
+
+		local oldIndex
+		oldIndex = hookmetamethod(game, "__index", ncc(function(self, key)
+			if self == Mouse and alive and not ownCall and (key == "Hit" or key == "Target" or key == "UnitRay")
+				and silentActive() and not cc() and roll() then
+				if key == "Hit" then return CFrame.new(silentTarget.part.Position) end
+				if key == "Target" then return silentTarget.part end
+				local o = Camera.CFrame.Position
+				return Ray.new(o, (silentTarget.part.Position - o).Unit)
+			end
+			return oldIndex(self, key)
+		end))
+	end)
+end
+
+-- ============================================================
+-- Drawing: FOV-Kreis, Crosshair, ESP
+-- ============================================================
+local hasDrawing = type(Drawing) == "table" or type(Drawing) == "userdata"
+local function draw(kind, props)
+	if not hasDrawing then return nil end
+	local ok, o = pcall(function() return Drawing.new(kind) end)
+	if not ok or not o then return nil end
+	for k, v in pairs(props or {}) do pcall(function() o[k] = v end) end
+	return o
+end
+
+local fovCircle = draw("Circle", { Thickness = 1.5, NumSides = 64, Filled = false, Visible = false, Transparency = 1, Color = T.Accent })
+local silentCircle = draw("Circle", { Thickness = 1, NumSides = 64, Filled = false, Visible = false, Transparency = 0.7, Color = Color3.new(1, 1, 1) })
+local chH = draw("Line", { Thickness = 1.5, Visible = false, Color = T.Accent })
+local chV = draw("Line", { Thickness = 1.5, Visible = false, Color = T.Accent })
+
+local espObjs = {} -- Schluessel = Charakter-Modell
+local function makeEsp()
+	return {
+		boxO = draw("Square", { Thickness = 3, Filled = false, Color = Color3.new(0, 0, 0), Visible = false }),
+		box  = draw("Square", { Thickness = 1, Filled = false, Color = Color3.new(1, 1, 1), Visible = false }),
+		name = draw("Text", { Size = 13, Center = true, Outline = true, Color = Color3.new(1, 1, 1), Visible = false }),
+		dist = draw("Text", { Size = 12, Center = true, Outline = true, Color = Color3.fromRGB(200, 200, 210), Visible = false }),
+		hpBg = draw("Line", { Thickness = 4, Color = Color3.new(0, 0, 0), Visible = false }),
+		hp   = draw("Line", { Thickness = 2, Color = T.Good, Visible = false }),
+		tracer = draw("Line", { Thickness = 1, Color = Color3.new(1, 1, 1), Visible = false }),
+		visT = 0, vis = true,
+	}
+end
+local function hideEsp(e)
+	for k, o in pairs(e) do
+		if type(o) ~= "number" and type(o) ~= "boolean" and o then o.Visible = false end
+	end
+end
+local function removeEsp(key)
+	local e = espObjs[key]
+	if e then
+		for k, o in pairs(e) do
+			if type(o) ~= "number" and type(o) ~= "boolean" and o then pcall(function() o:Remove() end) end
+		end
+		espObjs[key] = nil
+	end
+end
+
+local chamsObjs = {}
+local function removeChams(key)
+	if chamsObjs[key] then pcall(function() chamsObjs[key]:Destroy() end) end
+	chamsObjs[key] = nil
+end
+local function updateChams()
+	if not S.chams then
+		for k in pairs(chamsObjs) do removeChams(k) end
+		return
+	end
+	local list = {}
+	local camPos = Camera.CFrame.Position
+	for _, t in ipairs(targets) do
+		if not (S.espTeamCheck and isTeammate(t)) then
+			list[#list + 1] = { t = t, d = (t.root.Position - camPos).Magnitude }
+		end
+	end
+	table.sort(list, function(a, b) return a.d < b.d end)
+	local keep = {}
+	for i = 1, math.min(#list, 30) do -- Roblox-Limit: ca. 31 Highlights
+		local ch = list[i].t.char
+		keep[ch] = true
+		local h = chamsObjs[ch]
+		if not h or not h.Parent then
+			h = new("Highlight", { Adornee = ch, DepthMode = Enum.HighlightDepthMode.AlwaysOnTop }, gui)
+			chamsObjs[ch] = h
+		end
+		h.FillColor = T.Accent
+		h.OutlineColor = Color3.new(1, 1, 1)
+		h.FillTransparency = S.chamsFill
+		h.OutlineTransparency = S.chamsOutline
+	end
+	for k in pairs(chamsObjs) do
+		if not keep[k] then removeChams(k) end
+	end
+end
+
+local function drawEspOne(t, e, vp, now)
+	if S.espTeamCheck and isTeammate(t) then hideEsp(e) return end
+	local root = t.root
+	local rp = root.Position
+	local camPos = Camera.CFrame.Position
+	local d = (rp - camPos).Magnitude
+	if d > S.espMaxDist then hideEsp(e) return end
+	-- feste Masse statt GetBoundingBox: bleibt korrekt bei Hitbox-Expander und Waffen in der Hand
+	local head = t.char:FindFirstChild("Head")
+	local topW = (head and head.Position or rp + Vector3.new(0, 2.5, 0)) + Vector3.new(0, 0.8, 0)
+	local botW = rp - Vector3.new(0, 3.1, 0)
+	local tp = Camera:WorldToViewportPoint(topW)
+	local bp = Camera:WorldToViewportPoint(botW)
+	if tp.Z <= 0 or bp.Z <= 0 then hideEsp(e) return end
+	local h = math.max(math.abs(bp.Y - tp.Y), 8)
+	local w = h * 0.55
+	local cx = (tp.X + bp.X) / 2
+	local x, y = cx - w / 2, math.min(tp.Y, bp.Y)
+
+	local col = isTeammate(t) and T.Good or T.Accent
+	if S.espVisColor then
+		if now - e.visT > 0.15 then
+			e.visT = now
+			e.vis = isVisible(pickPart(t, "Head"), t.char)
+		end
+		col = e.vis and T.Good or T.Bad
+	end
+
+	if e.box then e.box.Visible = S.espBox; e.box.Position = Vector2.new(x, y); e.box.Size = Vector2.new(w, h); e.box.Color = col end
+	if e.boxO then e.boxO.Visible = S.espBox; e.boxO.Position = Vector2.new(x, y); e.boxO.Size = Vector2.new(w, h) end
+	if e.name then e.name.Visible = S.espName; e.name.Text = t.name; e.name.Position = Vector2.new(cx, y - 16) end
+	if e.dist then e.dist.Visible = S.espDist; e.dist.Text = math.floor(d) .. " m"; e.dist.Position = Vector2.new(cx, y + h + 2) end
+	if e.hp and e.hpBg then
+		local frac = t.hum and math.clamp(t.hum.Health / math.max(t.hum.MaxHealth, 1), 0, 1) or 1
+		local bx = x - 5
+		e.hpBg.Visible = S.espHealth; e.hpBg.From = Vector2.new(bx, y + h); e.hpBg.To = Vector2.new(bx, y)
+		e.hp.Visible = S.espHealth; e.hp.From = Vector2.new(bx, y + h); e.hp.To = Vector2.new(bx, y + h - h * frac)
+		e.hp.Color = Color3.fromRGB(255, 80, 80):Lerp(Color3.fromRGB(70, 214, 140), frac)
+	end
+	if e.tracer then e.tracer.Visible = S.espTracer; e.tracer.From = Vector2.new(vp.X / 2, vp.Y); e.tracer.To = Vector2.new(cx, y + h); e.tracer.Color = col end
+end
+
+local function updateEsp(now)
+	if not hasDrawing then return end
+	if not S.esp then
+		for _, e in pairs(espObjs) do hideEsp(e) end
+		return
+	end
+	local vp = Camera.ViewportSize
+	local seen = {}
+	for _, t in ipairs(targets) do
+		seen[t.char] = true
+		local e = espObjs[t.char]
+		if not e then e = makeEsp() espObjs[t.char] = e end
+		if not pcall(drawEspOne, t, e, vp, now) then hideEsp(e) end
+	end
+	for key in pairs(espObjs) do
+		if not seen[key] then removeEsp(key) end
+	end
+end
+
+-- ============================================================
+-- Hitbox Expander (jeden Frame erneuert, damit das Spiel sie nicht zuruecksetzt)
+-- ============================================================
+local hbOrig = setmetatable({}, { __mode = "k" })
+local function hbRestoreAll()
+	for part, o in pairs(hbOrig) do
+		if part and part.Parent then
+			pcall(function()
+				part.Size = o.s
+				part.Transparency = o.t
+				part.CanCollide = o.c
+				part.Massless = o.m
+			end)
+		end
+		hbOrig[part] = nil
+	end
+end
+local function hbApply(part, size)
+	local o = hbOrig[part]
+	if not o then
+		o = { s = part.Size, t = part.Transparency, c = part.CanCollide, m = part.Massless }
+		hbOrig[part] = o
+	end
+	if part.Size ~= size then part.Size = size end
+	part.Transparency = S.hitboxTrans
+	part.CanCollide = false
+	part.Massless = true
+end
+local function updateHitboxes()
+	if not S.hitbox then
+		if next(hbOrig) then hbRestoreAll() end
+		return
+	end
+	local sz = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
+	for _, t in ipairs(targets) do
+		if not (S.hitboxTeamCheck and isTeammate(t)) then
+			local c = t.char
+			if S.hitboxPart == "HumanoidRootPart" or S.hitboxPart == "Beides" then
+				local r = c:FindFirstChild("HumanoidRootPart") or t.root
+				if r and r:IsA("BasePart") then pcall(hbApply, r, sz) end
+			end
+			if S.hitboxPart == "Head" or S.hitboxPart == "Beides" then
+				local hd = c:FindFirstChild("Head")
+				if hd and hd:IsA("BasePart") then pcall(hbApply, hd, sz) end
+			end
+		end
+	end
+end
+
+-- ============================================================
+-- Player: Speed, Jump, Noclip, Fly, Fullbright
+-- ============================================================
+local flyBV, flyBG
+local function stopFly()
+	if flyBV then flyBV:Destroy(); flyBV = nil end
+	if flyBG then flyBG:Destroy(); flyBG = nil end
+	local h = myHum()
+	if h then h.PlatformStand = false end
+end
+local function updateFly()
+	if not S.fly then
+		if flyBV then stopFly() end
+		return
+	end
+	local root, hum = myRoot(), myHum()
+	if not root or not hum then return end
+	if not flyBV or not flyBV.Parent then
+		flyBV = new("BodyVelocity", { MaxForce = Vector3.new(1e9, 1e9, 1e9), Velocity = Vector3.zero }, root)
+		flyBG = new("BodyGyro", { MaxTorque = Vector3.new(1e9, 1e9, 1e9), P = 9e4 }, root)
+	end
+	hum.PlatformStand = true
+	local cf = Camera.CFrame
+	local dir = Vector3.zero
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += cf.LookVector end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= cf.LookVector end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= cf.RightVector end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += cf.RightVector end
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.yAxis end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.yAxis end
+	flyBV.Velocity = dir.Magnitude > 0 and dir.Unit * S.flySpeed or Vector3.zero
+	flyBG.CFrame = cf
+end
+
+local lightOrig
+local function applyFullbright()
+	Lighting.Brightness = 2
+	Lighting.ClockTime = 14
+	Lighting.FogEnd = 1e6
+	Lighting.GlobalShadows = false
+	Lighting.Ambient = Color3.fromRGB(190, 190, 190)
+end
+local function setFullbright(on)
+	if on then
+		if not lightOrig then
+			lightOrig = { Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime, FogEnd = Lighting.FogEnd, GlobalShadows = Lighting.GlobalShadows, Ambient = Lighting.Ambient }
+		end
+		applyFullbright()
+	elseif lightOrig then
+		for k, v in pairs(lightOrig) do Lighting[k] = v end
+		lightOrig = nil
+	end
+end
+
+local wasSpeed, wasJump = false, false
+connect(RunService.Heartbeat, function()
+	if not alive then return end
+	pcall(updateHitboxes)
+	local hum = myHum()
+	if hum then
+		if S.speedOn then hum.WalkSpeed = S.speed; wasSpeed = true
+		elseif wasSpeed then hum.WalkSpeed = 16; wasSpeed = false end
+		if S.jumpOn then hum.UseJumpPower = true; hum.JumpPower = S.jump; wasJump = true
+		elseif wasJump then hum.JumpPower = 50; wasJump = false end
+	end
+end)
+
+connect(RunService.Stepped, function()
+	if S.noclip and LP.Character then
+		for _, v in ipairs(LP.Character:GetDescendants()) do
+			if v:IsA("BasePart") then v.CanCollide = false end
+		end
+	end
+end)
+
+connect(UserInputService.JumpRequest, function()
+	if S.infJump then
+		local h = myHum()
+		if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+	end
+end)
+
+pcall(function()
+	local vu = game:GetService("VirtualUser")
+	connect(LP.Idled, function()
+		vu:CaptureController()
+		vu:ClickButton2(Vector2.new())
+	end)
+end)
+
+-- ============================================================
+-- Hauptschleife
+-- ============================================================
+local frames, lastT = 0, os.clock()
+local stickyLock = nil
+local wmLabel, statusLbl
+local lastFb = 0
+local hasMouseRel = type(mousemoverel) == "function"
+
+connect(RunService.RenderStepped, function()
+	if not alive then return end
+	Camera = workspace.CurrentCamera
+	local now = os.clock()
+	local ml = mouseLoc()
+	local r = myRoot()
+	myPos = r and r.Position or nil
+
+	-- Ziele (einmal pro Frame)
+	collectTargets()
+
+	-- FPS / Status
+	frames += 1
+	if now - lastT >= 0.5 then
+		local fps = math.floor(frames / (now - lastT) + 0.5)
+		frames, lastT = 0, now
+		if wmLabel then wmLabel.Text = "Sniper Arena  |  Antonio  |  " .. fps .. " FPS" end
+		if statusLbl then
+			statusLbl.Text = "Ziele im Blick: " .. #targets .. "   |   Silent-Ziel: " .. (silentTarget and silentTarget.name or "-")
+				.. "\nHooks: " .. (hooksOk and "OK" or "AUS") .. "   |   Drawing: " .. (hasDrawing and "OK" or "AUS") .. "   |   Maus-Modus: " .. (hasMouseRel and "OK" or "AUS")
+		end
+	end
+
+	-- Kreise / Crosshair
+	if fovCircle then
+		fovCircle.Visible = S.aimbot and S.showFov
+		fovCircle.Position = ml
+		fovCircle.Radius = S.aimFov
+		fovCircle.Color = T.Accent
+	end
+	if silentCircle then
+		silentCircle.Visible = S.silent and not S.magic and S.showFov
+		silentCircle.Position = ml
+		silentCircle.Radius = S.silentFov
+	end
+	if chH and chV then
+		local vp = Camera.ViewportSize
+		local cx, cy = vp.X / 2, vp.Y / 2
+		chH.Visible = S.crosshair; chV.Visible = S.crosshair
+		chH.From = Vector2.new(cx - 8, cy); chH.To = Vector2.new(cx + 8, cy); chH.Color = T.Accent
+		chV.From = Vector2.new(cx, cy - 8); chV.To = Vector2.new(cx, cy + 8); chV.Color = T.Accent
+	end
+
+	-- echte Maus-Werte merken (fuer die Hooks)
+	ownCall = true
+	pcall(function() realHitPos = Mouse.Hit.Position; realTarget = Mouse.Target end)
+	ownCall = false
+
+	-- Silent / Magic Ziel
+	if S.magic then
+		silentTarget = getTarget(S.silentPart, 0, false, false, 1e9)
+	elseif S.silent then
+		silentTarget = getTarget(S.silentPart, S.silentFov, true, S.wallCheck, 1e9)
+	else
+		silentTarget = nil
+	end
+
+	updateEsp(now)
+	updateFly()
+	if S.fovOn then Camera.FieldOfView = S.fov end
+	if S.fullbright and now - lastFb > 0.5 then lastFb = now; applyFullbright() end
+end)
+
+-- Aimbot: laeuft NACH dem Roblox-Kamera-Script
+pcall(function() RunService:UnbindFromRenderStep("SniperAimbot") end)
+RunService:BindToRenderStep("SniperAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+	if not alive then return end
+	pcall(function()
+		if S.aimbot and aimKeyDown() then
+			local tgt
+			if S.stickyTarget and stickyLock and stickyLock.part.Parent and (not stickyLock.hum or stickyLock.hum.Health > 0) then
+				tgt = stickyLock
+			else
+				tgt = getTarget(S.aimPart, S.aimFov, true, S.wallCheck, S.aimMaxDist)
+				stickyLock = tgt
+			end
+			if tgt then
+				local part = tgt.part
+				local vel = tgt.root and tgt.root.AssemblyLinearVelocity or Vector3.zero
+				local aimPos = part.Position + vel * S.predict
+				local k = 1 / math.max(S.smooth, 1)
+				local cam = workspace.CurrentCamera
+				if S.aimMethod == "Maus" and hasMouseRel then
+					local sp = cam:WorldToViewportPoint(aimPos)
+					if sp.Z > 0 then
+						local m = mouseLoc()
+						mousemoverel((sp.X - m.X) * k, (sp.Y - m.Y) * k)
+					end
+				else
+					cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, aimPos), k)
+				end
+			end
+		else
+			stickyLock = nil
+		end
+	end)
+end)
+
+task.spawn(function()
+	while alive do
+		pcall(updateChams)
+		task.wait(0.3)
+	end
+end)
+
+connect(Players.PlayerRemoving, function(p)
+	if p.Character then removeEsp(p.Character); removeChams(p.Character) end
+end)
+
+-- ============================================================
+-- UI
+-- ============================================================
+local main = new("Frame", { Name = "Main", Size = UDim2.fromOffset(640, 440), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = T.Bg, BorderSizePixel = 0, ClipsDescendants = true }, gui)
+round(main, 14)
+local mainStroke = stroke(main, T.Line, 1)
+accented(mainStroke, "Color")
+local mainScale = new("UIScale", { Scale = 0.9 }, main)
+tween(mainScale, 0.28, { Scale = 1 })
+
+local top = new("Frame", { Size = UDim2.new(1, -16, 0, 44), Position = UDim2.fromOffset(8, 8), BackgroundColor3 = T.Panel, BorderSizePixel = 0 }, main)
+round(top, 10)
+do
+	local dragging, start, startPos
+	top.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging, start, startPos = true, i.Position, main.Position
+			i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then dragging = false end end)
+		end
+	end)
+	connect(UserInputService.InputChanged, function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			local d = i.Position - start
+			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+end
+new("TextLabel", { Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -120, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, Text = "SNIPER ARENA SCRIPT", TextColor3 = T.Text }, top)
+local byLbl = new("TextLabel", { Position = UDim2.fromOffset(222, 0), Size = UDim2.new(1, -330, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Text = "By Antonio" }, top)
+accented(byLbl, "TextColor3")
+
+local function topBtn(txt, x, cb)
+	local b = new("TextButton", { Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, x, 0.5, -14), BackgroundColor3 = T.Card2, Text = txt, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = T.Text, AutoButtonColor = false, BorderSizePixel = 0 }, top)
+	round(b, 8)
+	b.MouseEnter:Connect(function() tween(b, 0.12, { BackgroundColor3 = T.Line }) end)
+	b.MouseLeave:Connect(function() tween(b, 0.12, { BackgroundColor3 = T.Card2 }) end)
+	b.MouseButton1Click:Connect(cb)
+	return b
+end
+
+local side = new("Frame", { Position = UDim2.fromOffset(8, 60), Size = UDim2.new(0, 140, 1, -68), BackgroundColor3 = T.Panel, BorderSizePixel = 0 }, main)
+round(side, 10)
+local sideList = new("Frame", { Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -16, 1, -16), BackgroundTransparency = 1 }, side)
+new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, sideList)
+
+local content = new("Frame", { Position = UDim2.fromOffset(156, 60), Size = UDim2.new(1, -164, 1, -68), BackgroundColor3 = T.Panel, BorderSizePixel = 0, ClipsDescendants = true }, main)
+round(content, 10)
+
+local tabs, tabOrder = {}, 0
+local function selectTab(name)
+	for n, t in pairs(tabs) do
+		local on = n == name
+		t.page.Visible = on
+		tween(t.btn, 0.15, { BackgroundColor3 = on and T.Card2 or T.Panel })
+		t.btn.TextColor3 = on and T.Text or T.Muted
+		t.bar.BackgroundTransparency = on and 0 or 1
+	end
+end
+
+local Tab = {}
+Tab.__index = Tab
+
+local function createTab(name)
+	tabOrder += 1
+	local btn = new("TextButton", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = T.Panel, Text = name, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = T.Muted, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = tabOrder }, sideList)
+	round(btn, 8)
+	pad(btn, 16, 0)
+	local bar = new("Frame", { Size = UDim2.fromOffset(3, 16), Position = UDim2.new(0, -10, 0.5, -8), BorderSizePixel = 0, BackgroundTransparency = 1 }, btn)
+	round(bar, 2)
+	accented(bar, "BackgroundColor3")
+
+	local page = new("ScrollingFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = T.Line, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Visible = false }, content)
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, page)
+	pad(page, 10, 10, 12, 10)
+
+	btn.MouseButton1Click:Connect(function() selectTab(name) end)
+	local t = setmetatable({ btn = btn, bar = bar, page = page, n = 0 }, Tab)
+	tabs[name] = t
+	return t
+end
+
+function Tab:row(h)
+	self.n += 1
+	local f = new("Frame", { Size = UDim2.new(1, 0, 0, h or 36), BackgroundColor3 = T.Card, BorderSizePixel = 0, LayoutOrder = self.n }, self.page)
+	round(f, 8)
+	return f
+end
+
+function Tab:Section(text)
+	self.n += 1
+	local l = new("TextLabel", { Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Text = string.upper(text), LayoutOrder = self.n }, self.page)
+	accented(l, "TextColor3")
+end
+
+function Tab:Toggle(text, key, cb)
+	local r = self:row(36)
+	new("TextLabel", { Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -80, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left, Text = text }, r)
+	local sw = new("TextButton", { Size = UDim2.fromOffset(42, 22), Position = UDim2.new(1, -54, 0.5, -11), Text = "", AutoButtonColor = false, BorderSizePixel = 0, BackgroundColor3 = T.Card2 }, r)
+	round(sw, 11)
+	local knob = new("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, sw)
+	round(knob, 8)
+	local function paint()
+		local on = S[key]
+		tween(sw, 0.15, { BackgroundColor3 = on and T.Accent or T.Card2 })
+		tween(knob, 0.15, { Position = on and UDim2.fromOffset(23, 3) or UDim2.fromOffset(3, 3) })
+	end
+	paint()
+	sw.MouseButton1Click:Connect(function()
+		S[key] = not S[key]
+		paint()
+		save()
+		if cb then cb(S[key]) end
+	end)
+	task.spawn(function()
+		while alive and sw.Parent do
+			if S[key] then sw.BackgroundColor3 = sw.BackgroundColor3:Lerp(T.Accent, 0.3) end
+			task.wait(0.3)
+		end
+	end)
+end
+
+function Tab:Slider(text, key, min, max, decimals, suffix)
+	decimals = decimals or 0
+	local r = self:row(50)
+	local lbl = new("TextLabel", { Position = UDim2.fromOffset(14, 5), Size = UDim2.new(1, -28, 0, 18), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left, Text = "" }, r)
+	local bar = new("Frame", { Position = UDim2.fromOffset(14, 33), Size = UDim2.new(1, -28, 0, 6), BackgroundColor3 = T.Card2, BorderSizePixel = 0 }, r)
+	round(bar, 3)
+	local fill = new("Frame", { Size = UDim2.fromScale(0, 1), BorderSizePixel = 0 }, bar)
+	round(fill, 3)
+	accented(fill, "BackgroundColor3")
+	local knob = new("Frame", { Size = UDim2.fromOffset(12, 12), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, bar)
+	round(knob, 6)
+	local function fmt(v)
+		if decimals > 0 then return string.format("%." .. decimals .. "f", v) end
+		return tostring(math.floor(v + 0.5))
+	end
+	local function paint()
+		S[key] = math.clamp(S[key], min, max)
+		local a = (S[key] - min) / (max - min)
+		fill.Size = UDim2.fromScale(a, 1)
+		knob.Position = UDim2.fromScale(a, 0.5)
+		lbl.Text = text .. ":  " .. fmt(S[key]) .. (suffix or "")
+	end
+	paint()
+	local dragging = false
+	local function setFrom(x)
+		local a = math.clamp((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1)
+		local v = min + (max - min) * a
+		local m = 10 ^ decimals
+		S[key] = math.floor(v * m + 0.5) / m
+		paint()
+		save()
+	end
+	bar.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			setFrom(i.Position.X)
+		end
+	end)
+	connect(UserInputService.InputChanged, function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			setFrom(i.Position.X)
+		end
+	end)
+	connect(UserInputService.InputEnded, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+	end)
+end
+
+function Tab:Dropdown(text, key, options, cb)
+	local r = self:row(36)
+	local b = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", AutoButtonColor = false }, r)
+	local l = new("TextLabel", { Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -28, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left, Text = "" }, r)
+	local function paint() l.Text = text .. ":  " .. tostring(S[key]) .. "   ›" end
+	paint()
+	b.MouseButton1Click:Connect(function()
+		local idx = table.find(options, S[key]) or 0
+		S[key] = options[idx % #options + 1]
+		paint()
+		save()
+		if cb then cb(S[key]) end
+	end)
+end
+
+function Tab:Button(text, cb, danger)
+	local r = self:row(36)
+	r.BackgroundTransparency = 1
+	local b = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = danger and Color3.fromRGB(116, 40, 52) or T.Card2, Text = text, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = T.Text, AutoButtonColor = false, BorderSizePixel = 0 }, r)
+	round(b, 8)
+	b.MouseEnter:Connect(function() tween(b, 0.12, { BackgroundColor3 = (danger and Color3.fromRGB(150, 50, 66)) or T.Line }) end)
+	b.MouseLeave:Connect(function() tween(b, 0.12, { BackgroundColor3 = danger and Color3.fromRGB(116, 40, 52) or T.Card2 }) end)
+	b.MouseButton1Click:Connect(cb)
+end
+
+function Tab:Label(text, h)
+	local r = self:row(h or 34)
+	r.BackgroundTransparency = 1
+	return new("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = T.Muted, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, Text = text }, r)
+end
+
+-- ============================================================
+-- Tabs
+-- ============================================================
+local PARTS = { "Head", "HumanoidRootPart", "UpperTorso", "Torso" }
+
+local tAim = createTab("Aimbot")
+statusLbl = tAim:Label("...", 40)
+tAim:Section("Aimbot")
+tAim:Toggle("Aimbot aktivieren", "aimbot")
+tAim:Dropdown("Aim-Taste", "aimKey", { "RMB", "LMB", "Immer" })
+tAim:Dropdown("Methode (Maus = fuer feste Kameras)", "aimMethod", { "Kamera", "Maus" }, function(m)
+	if m == "Maus" and not hasMouseRel then notify("Dein Executor hat kein mousemoverel - Kamera-Modus wird genutzt.", true) end
+end)
+tAim:Dropdown("Zielteil", "aimPart", PARTS)
+tAim:Dropdown("Ziel-Prioritaet", "priority", { "Fadenkreuz", "Distanz", "Leben" })
+tAim:Slider("FOV Radius", "aimFov", 30, 800, 0, " px")
+tAim:Slider("Smoothing (1 = sofort)", "smooth", 1, 20, 0)
+tAim:Slider("Prediction", "predict", 0, 0.3, 2)
+tAim:Slider("Max. Distanz", "aimMaxDist", 100, 10000, 0, " m")
+tAim:Toggle("Ziel einrasten (Sticky)", "stickyTarget")
+tAim:Section("Ziele")
+tAim:Toggle("Team-Check (Teammitglieder ignorieren)", "teamCheck")
+tAim:Toggle("Wand-Check (nur sichtbare)", "wallCheck")
+tAim:Toggle("NPCs / Bots auch als Ziel", "targetNpcs")
+tAim:Toggle("FOV-Kreis anzeigen", "showFov")
+
+local tMag = createTab("Magic Bullets")
+tMag:Section("Silent Aim")
+tMag:Toggle("Silent Aim", "silent", function(on)
+	if on and not hooksOk then notify("Dein Executor unterstützt hookmetamethod nicht.", true) end
+end)
+tMag:Dropdown("Zielteil", "silentPart", PARTS)
+tMag:Slider("Silent FOV", "silentFov", 30, 1000, 0, " px")
+tMag:Slider("Hit-Chance", "hitChance", 1, 100, 0, " %")
+tMag:Section("Magic Bullets")
+tMag:Toggle("Magic Bullets (trifft immer)", "magic", function(on)
+	if on and not hooksOk then notify("Dein Executor unterstützt hookmetamethod nicht.", true) end
+end)
+tMag:Toggle("Durch Wände schießen", "magicThroughWalls")
+tMag:Section("Abfangen")
+tMag:Toggle("Remote-Spoof (Server-Treffer umbiegen)", "remoteSpoof")
+tMag:Toggle("Nur Schuss-Remotes (strenger)", "remoteOnlyNamed")
+tMag:Toggle("Mausposition faelschen", "mouseSpoof")
+tMag:Toggle("Remote-Log in F9 Konsole (Debug)", "remoteLog")
+tMag:Label("Magic Bullets waehlt das Ziel, das am naechsten am Fadenkreuz ist (egal wohin du schaust). Treffer kommen nicht an? Remote-Log an, schiessen, F9 oeffnen: Die [SniperLog]-Zeilen zeigen, welche Remote den Schuss sendet.", 76)
+
+local tHb = createTab("Hitbox")
+tHb:Section("Hitbox Expander")
+tHb:Toggle("Hitbox Expander", "hitbox", function(on) if not on then hbRestoreAll() end end)
+tHb:Dropdown("Teil", "hitboxPart", { "HumanoidRootPart", "Head", "Beides" }, function() hbRestoreAll() end)
+tHb:Slider("Größe", "hitboxSize", 2, 40, 0, " studs")
+tHb:Slider("Transparenz", "hitboxTrans", 0, 1, 2)
+tHb:Toggle("Teammitglieder auslassen", "hitboxTeamCheck")
+tHb:Label("Die Hitbox wird jeden Frame erneuert und gilt nur auf deinem Client. Zaehlt das Spiel Treffer serverseitig, wirkt sie nur bei Spielen, die Treffer vom Client melden.", 64)
+
+local tEsp = createTab("ESP")
+tEsp:Section("ESP")
+tEsp:Toggle("ESP aktivieren", "esp", function(on)
+	if on and not hasDrawing then notify("Dein Executor hat keine Drawing-Library.", true) end
+end)
+tEsp:Toggle("Box", "espBox")
+tEsp:Toggle("Name", "espName")
+tEsp:Toggle("Distanz", "espDist")
+tEsp:Toggle("Lebensbalken", "espHealth")
+tEsp:Toggle("Tracer", "espTracer")
+tEsp:Toggle("Farbe nach Sichtbarkeit (gruen = sichtbar)", "espVisColor")
+tEsp:Slider("Max. Distanz", "espMaxDist", 100, 20000, 0, " m")
+tEsp:Toggle("Teammitglieder ausblenden", "espTeamCheck")
+
+local tWall = createTab("Wallhack")
+tWall:Section("Chams (durch Wände sichtbar)")
+tWall:Toggle("Wallhack / Chams", "chams", function(on) if not on then for k in pairs(chamsObjs) do removeChams(k) end end end)
+tWall:Slider("Füllung Transparenz", "chamsFill", 0, 1, 2)
+tWall:Slider("Umriss Transparenz", "chamsOutline", 0, 1, 2)
+tWall:Label("Roblox erlaubt max. ca. 31 Highlights gleichzeitig - es werden die 30 naechsten Gegner markiert.")
+
+local tPl = createTab("Player")
+tPl:Section("Bewegung")
+tPl:Toggle("Speed", "speedOn")
+tPl:Slider("Speed Wert", "speed", 16, 200, 0)
+tPl:Toggle("Jump Power", "jumpOn")
+tPl:Slider("Jump Wert", "jump", 50, 300, 0)
+tPl:Toggle("Infinite Jump", "infJump")
+tPl:Toggle("Noclip", "noclip")
+tPl:Toggle("Fly (WASD, Space, Ctrl)", "fly", function(on) if not on then stopFly() end end)
+tPl:Slider("Fly Speed", "flySpeed", 20, 250, 0)
+
+local tVis = createTab("Visuals")
+tVis:Section("Welt")
+tVis:Toggle("Fullbright", "fullbright", setFullbright)
+tVis:Toggle("FOV ändern", "fovOn")
+tVis:Slider("Kamera FOV", "fov", 40, 120, 0)
+tVis:Toggle("Crosshair", "crosshair")
+tVis:Toggle("Watermark", "watermark", function(on) if wmLabel then wmLabel.Visible = on end end)
+
+local tSet = createTab("Settings")
+tSet:Section("Menü")
+tSet:Dropdown("Akzentfarbe", "accent", ACCENT_NAMES, setAccent)
+tSet:Dropdown("Menü-Taste", "menuKey", { "RightShift", "Insert", "RightControl", "Delete", "End", "F4" })
+tSet:Label("Menü ein-/ausblenden mit der gewählten Taste. Einstellungen werden " .. (canFile and "automatisch gespeichert." or "NICHT gespeichert (Executor kann keine Dateien)."))
+tSet:Section("Info")
+tSet:Label("Sniper Arena Script By Antonio")
+tSet:Button("Script entladen", function() if env.__SniperArenaCleanup then env.__SniperArenaCleanup() end end, true)
+
+wmLabel = new("TextLabel", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(250, 24), BackgroundColor3 = T.Panel, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = T.Text, Text = "Sniper Arena  |  Antonio", Visible = S.watermark }, gui)
+round(wmLabel, 8)
+stroke(wmLabel, T.Line, 1)
+
+selectTab("Aimbot")
+setAccent(S.accent)
+if S.fullbright then setFullbright(true) end
+
+local mini = false
+topBtn("–", -72, function()
+	mini = not mini
+	side.Visible = not mini
+	content.Visible = not mini
+	tween(main, 0.2, { Size = mini and UDim2.fromOffset(640, 60) or UDim2.fromOffset(640, 440) })
+end)
+
+local function cleanup()
+	alive = false
+	pcall(function() RunService:UnbindFromRenderStep("SniperAimbot") end)
+	pcall(hbRestoreAll)
+	pcall(stopFly)
+	pcall(setFullbright, false)
+	pcall(function()
+		local h = myHum()
+		if h then
+			if wasSpeed then h.WalkSpeed = 16 end
+			if wasJump then h.JumpPower = 50 end
+		end
+	end)
+	for k in pairs(espObjs) do removeEsp(k) end
+	for k in pairs(chamsObjs) do removeChams(k) end
+	for _, o in ipairs({ fovCircle, silentCircle, chH, chV }) do if o then pcall(function() o:Remove() end) end end
+	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	if gui then gui:Destroy() end
+	env.__SniperArenaCleanup = nil
+end
+env.__SniperArenaCleanup = cleanup
+topBtn("X", -38, cleanup)
+
+local busy = false
+local function toggleMenu()
+	if busy or not alive then return end
+	busy = true
+	if main.Visible then
+		tween(mainScale, 0.18, { Scale = 0.85 })
+		task.delay(0.18, function()
+			main.Visible = false
+			mainScale.Scale = 1
+			busy = false
+		end)
+	else
+		mainScale.Scale = 0.85
+		main.Visible = true
+		tween(mainScale, 0.2, { Scale = 1 })
+		task.delay(0.2, function() busy = false end)
+	end
+end
+
+connect(UserInputService.InputBegan, function(i, processed)
+	if processed then return end
+	if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode.Name == S.menuKey then
+		toggleMenu()
+	end
+end)
+
+notify("Sniper Arena By Antonio geladen. Menü: " .. S.menuKey)
+if not hooksOk then notify("Silent Aim / Magic Bullets brauchen hookmetamethod (nicht verfügbar).", true) end
+if not hasDrawing then notify("Keine Drawing-Library: ESP und FOV-Kreis sind deaktiviert.", true) end
